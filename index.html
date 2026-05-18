@@ -314,6 +314,10 @@
         <span class="icon">📋</span>
         <span>입출고 기록</span>
       </div>
+      <div class="nav-item" onclick="showSection('requests', this)">
+        <span class="icon">📝</span>
+        <span>소모품 신청</span>
+      </div>
     </nav>
     <div class="sidebar-footer">
       <div id="connection-status">● 연결 중...</div>
@@ -403,6 +407,58 @@
         </div>
       </div>
 
+      <!-- 소모품 신청 섹션 -->
+      <div id="section-requests" class="section">
+        <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
+          <div class="stat-card">
+            <div class="stat-label">전체 신청</div>
+            <div class="stat-value td-mono" id="req-stat-total">—</div>
+            <div class="stat-desc">누적 신청 건수</div>
+          </div>
+          <div class="stat-card warn">
+            <div class="stat-label">처리 대기</div>
+            <div class="stat-value td-mono" id="req-stat-pending">—</div>
+            <div class="stat-desc">신청 상태 건수</div>
+          </div>
+          <div class="stat-card ok">
+            <div class="stat-label">처리 완료</div>
+            <div class="stat-value td-mono" id="req-stat-done">—</div>
+            <div class="stat-desc">처리완료 건수</div>
+          </div>
+        </div>
+        <div class="toolbar">
+          <div class="search-wrap">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="req-search" placeholder="신청자, 품목명, 부서 검색..." oninput="filterRequests()">
+          </div>
+          <select id="req-status-filter" onchange="filterRequests()">
+            <option value="">전체 상태</option>
+            <option value="신청">신청</option>
+            <option value="처리완료">처리완료</option>
+            <option value="취소">취소</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>신청일</th>
+                <th>신청자</th>
+                <th>부서</th>
+                <th>품목명</th>
+                <th>수량</th>
+                <th>신청 사유</th>
+                <th>상태</th>
+                <th style="text-align:right">관리</th>
+              </tr>
+            </thead>
+            <tbody id="requests-body">
+              <tr><td colspan="8"><div class="loading"><div class="spinner"></div>데이터 불러오는 중...</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- 입출고 기록 섹션 -->
       <div id="section-history" class="section">
         <div class="toolbar">
@@ -435,6 +491,42 @@
         </div>
       </div>
 
+    </div>
+  </div>
+</div>
+
+<!-- 소모품 신청 모달 -->
+<div class="modal-overlay" id="req-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>소모품 신청</h3>
+      <button class="modal-close" onclick="closeModals()">✕</button>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>신청자 *</label>
+        <input type="text" id="req-requester" placeholder="이름">
+      </div>
+      <div class="form-group">
+        <label>부서</label>
+        <input type="text" id="req-department" placeholder="소속 부서">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>품목명 *</label>
+      <input type="text" id="req-item-name" placeholder="신청할 소모품명">
+    </div>
+    <div class="form-group">
+      <label>수량 *</label>
+      <input type="number" id="req-qty" min="1" value="1">
+    </div>
+    <div class="form-group">
+      <label>신청 사유</label>
+      <textarea id="req-reason" rows="3" placeholder="사용 목적, 필요 사유 등을 입력해주세요"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModals()">취소</button>
+      <button class="btn btn-primary" onclick="saveRequest()">신청하기</button>
     </div>
   </div>
 </div>
@@ -543,6 +635,7 @@ const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 // ── State ─────────────────────────────────────────────
 let items = [];
 let historyData = [];
+let requestsData = [];
 let editId = null;
 let currentSection = 'inventory';
 
@@ -551,6 +644,7 @@ async function init() {
   try {
     await loadItems();
     await loadHistory();
+    await loadRequests();
     document.getElementById('connection-status').textContent = '● 연결됨';
     document.getElementById('connection-status').style.color = '#22c55e';
   } catch(e) {
@@ -675,13 +769,16 @@ function showSection(name, el) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.getElementById('section-' + name).classList.add('active');
   currentSection = name;
-  const titles = { inventory: ['재고 현황','전체 소모품 재고를 관리합니다'], history: ['입출고 기록','모든 입출고 내역을 조회합니다'] };
+  const titles = { inventory: ['재고 현황','전체 소모품 재고를 관리합니다'], history: ['입출고 기록','모든 입출고 내역을 조회합니다'], requests: ['소모품 신청','현업 소모품 신청 내역을 관리합니다'] };
   document.getElementById('page-title').textContent = titles[name][0];
   document.getElementById('page-desc').textContent = titles[name][1];
   const btn = document.getElementById('main-action-btn');
   if (name === 'history') {
     btn.textContent = '+ 입출고 등록';
     btn.onclick = openTxModal;
+  } else if (name === 'requests') {
+    btn.textContent = '+ 소모품 신청';
+    btn.onclick = openReqModal;
   } else {
     btn.textContent = '+ 소모품 등록';
     btn.onclick = openAddModal;
@@ -796,6 +893,104 @@ async function saveTx() {
   closeModals();
   await loadItems();
   await loadHistory();
+}
+
+// ── Requests ──────────────────────────────────────────
+async function loadRequests() {
+  const { data, error } = await db.from('requests').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  requestsData = data || [];
+  renderRequests();
+  updateReqStats();
+}
+
+function updateReqStats() {
+  document.getElementById('req-stat-total').textContent = requestsData.length;
+  document.getElementById('req-stat-pending').textContent = requestsData.filter(r => r.status === '신청').length;
+  document.getElementById('req-stat-done').textContent = requestsData.filter(r => r.status === '처리완료').length;
+}
+
+function reqStatusPill(status) {
+  if (status === '신청') return '<span class="pill pill-low">신청</span>';
+  if (status === '처리완료') return '<span class="pill pill-ok">처리완료</span>';
+  return '<span class="pill pill-out">취소</span>';
+}
+
+function renderRequests(data) {
+  const list = data || requestsData;
+  const tbody = document.getElementById('requests-body');
+  if (!list.length) {
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty"><div class="empty-icon">📝</div>신청 내역이 없습니다</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = list.map(r => `<tr>
+    <td class="td-mono td-muted">${r.created_at ? r.created_at.slice(0,10) : '—'}</td>
+    <td class="td-name">${r.requester}</td>
+    <td class="td-muted">${r.department || '—'}</td>
+    <td class="td-name">${r.item_name}</td>
+    <td class="td-mono" style="font-weight:600">${r.qty}</td>
+    <td class="td-muted" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.reason || '—'}</td>
+    <td>${reqStatusPill(r.status)}</td>
+    <td>
+      <div class="actions">
+        ${r.status === '신청' ? `<button class="btn btn-sm btn-ghost" onclick="updateReqStatus(${r.id},'처리완료')">처리완료</button>` : ''}
+        ${r.status === '신청' ? `<button class="btn btn-sm btn-danger btn-ghost" onclick="updateReqStatus(${r.id},'취소')">취소</button>` : ''}
+        <button class="btn btn-sm btn-danger btn-ghost" onclick="deleteRequest(${r.id})">삭제</button>
+      </div>
+    </td>
+  </tr>`).join('');
+}
+
+function filterRequests() {
+  const q = document.getElementById('req-search').value.toLowerCase();
+  const st = document.getElementById('req-status-filter').value;
+  const filtered = requestsData.filter(r => {
+    const matchQ = !q || r.requester.toLowerCase().includes(q) || r.item_name.toLowerCase().includes(q) || (r.department||'').toLowerCase().includes(q);
+    const matchS = !st || r.status === st;
+    return matchQ && matchS;
+  });
+  renderRequests(filtered);
+}
+
+function openReqModal() {
+  ['req-requester','req-department','req-item-name','req-reason'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('req-qty').value = 1;
+  document.getElementById('req-modal').classList.add('open');
+}
+
+async function saveRequest() {
+  const requester = document.getElementById('req-requester').value.trim();
+  const item_name = document.getElementById('req-item-name').value.trim();
+  if (!requester) { showToast('신청자를 입력해주세요.', 'error'); return; }
+  if (!item_name) { showToast('품목명을 입력해주세요.', 'error'); return; }
+  const payload = {
+    requester,
+    department: document.getElementById('req-department').value.trim(),
+    item_name,
+    qty: parseInt(document.getElementById('req-qty').value) || 1,
+    reason: document.getElementById('req-reason').value.trim(),
+    status: '신청'
+  };
+  const { error } = await db.from('requests').insert(payload);
+  if (error) { showToast('신청 실패: ' + error.message, 'error'); return; }
+  showToast('신청이 접수되었습니다.', 'success');
+  closeModals();
+  await loadRequests();
+}
+
+async function updateReqStatus(id, status) {
+  const { error } = await db.from('requests').update({ status }).eq('id', id);
+  if (error) { showToast('상태 변경 실패: ' + error.message, 'error'); return; }
+  showToast(`${status}으로 변경되었습니다.`, 'success');
+  await loadRequests();
+}
+
+async function deleteRequest(id) {
+  if (!confirm('이 신청 내역을 삭제하시겠습니까?')) return;
+  const { error } = await db.from('requests').delete().eq('id', id);
+  if (error) { showToast('삭제 실패: ' + error.message, 'error'); return; }
+  showToast('삭제되었습니다.', 'success');
+  await loadRequests();
 }
 
 // ── Export CSV ────────────────────────────────────────
